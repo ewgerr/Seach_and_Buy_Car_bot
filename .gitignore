@@ -1,0 +1,165 @@
+# Operating systems
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon?
+._*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log
+yarn-debug.log
+.pnp/
+.pnp.js
+package-lock.json
+yarn.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+venv/
+env/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+pyvenv.cfg
+.python-version
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+migrations/*.pyc
+instance/
+*.egg-info/
+dist/
+build/
+
+# Java / JVM
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+target/
+out/
+
+# Maven / Gradle
+/.mvn/
+.mvn/
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# .NET / Visual Studio
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+*.psess
+*.vsp
+TestResults/
+publish/
+*.nupkg
+*.snk
+*.pdb
+
+# JetBrains
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Go
+vendor/
+*.exe
+*.exe~
+*.test
+*.out
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# PHP / Composer
+vendor/
+composer.lock
+
+# Ruby
+*.gem
+*.rbc
+.bundle/
+vendor/bundle/
+log/
+tmp/
+db/*.sqlite3
+public/system/
+
+# Android / iOS
+*.apk
+*.ap_
+*.aab
+*.keystore
+build/
+captures/
+ios/Pods/
+*.iml
+
+# Database / Secrets / Env
+*.sqlite
+*.sqlite3
+*.db
+*.env
+.env*
+secrets.yml
+credentials.yml.enc
+
+# Logs, coverage, temp
+*.log
+*.log.*
+coverage/
+coverage.xml
+*.cache
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# IDE/project-specific
+.idea/
+.vscode/
+*.code-workspace
+
+# Misc
+.dist/
+.DS_Store
+Thumbs.db
+
+# Local project-specific
+.DS_Store
+/local_settings.py
+/local.env
+/.local/
+
+# If you want to track these, remove from this file:
+# !package-lock.json
+# !yarn.lock

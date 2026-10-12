@@ -1,0 +1,14 @@
+{
+  "users": {
+    "8751041240": {
+      "step": "awaiting_region_selection",
+      "data": {
+        "maxPrice": 4000,
+        "watchRegionId": 15
+      },
+      "settings": {
+        "defaultCount": 20
+      }
+    }
+  }
+}
