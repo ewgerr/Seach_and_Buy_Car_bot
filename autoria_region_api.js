@@ -359,6 +359,69 @@ function getCachedAverage(markId, modelId, year) {
 const watchEmitter = new EventEmitter();
 const activeWatches = new Map();
 
+// Try to extract creation timestamp (ms) from various possible fields in info
+function extractCreatedAtMs(info) {
+    if (!info) return null;
+    const tried = [];
+    function parseVal(v) {
+        if (!v && v !== 0) return null;
+        if (typeof v === 'number') {
+            // if seconds (10 digits) -> convert to ms
+            if (v > 1e12) return v; // already ms
+            if (v > 1e9) return v * 1000; // seconds -> ms
+            return null;
+        }
+        if (typeof v === 'string') {
+            const n = Number(v);
+            if (!isNaN(n)) {
+                return parseVal(n);
+            }
+            const d = Date.parse(v);
+            if (!isNaN(d)) return d;
+            return null;
+        }
+        if (typeof v === 'object') {
+            // try nested fields
+            for (const k of Object.keys(v)) {
+                const res = parseVal(v[k]);
+                if (res) return res;
+            }
+        }
+        return null;
+    }
+
+    const candidates = [
+        'dateCreated','created','created_at','creationDate','publicationDate','publishedDate','addDate','date','date_add','pub_date','posted_at'
+    ];
+    for (const key of candidates) {
+        if (info[key]) {
+            const ms = parseVal(info[key]);
+            if (ms) return ms;
+            tried.push(key);
+        }
+    }
+
+    // common nested places
+    if (info.autoData && typeof info.autoData === 'object') {
+        const ms = parseVal(info.autoData.date || info.autoData.addDate || info.autoData.createdAt || info.autoData.published_at || info.autoData.publishedDate);
+        if (ms) return ms;
+    }
+    if (info.location && typeof info.location === 'object') {
+        const ms = parseVal(info.location.date || info.location.createdAt);
+        if (ms) return ms;
+    }
+
+    // fallback: try any field containing 'date' in its key
+    for (const k of Object.keys(info)) {
+        if (/date|time|posted|pub/i.test(k)) {
+            const ms = parseVal(info[k]);
+            if (ms) return ms;
+        }
+    }
+
+    return null;
+}
+
 function startWatch({ chatId, regionId, maxPrice = 10000, intervalSec = 300, count = 50 }) {
     const key = `${chatId}:${regionId}`;
     if (activeWatches.has(key)) return false; // already watching
@@ -366,6 +429,7 @@ function startWatch({ chatId, regionId, maxPrice = 10000, intervalSec = 300, cou
     const seen = new Set();
     let stopped = false;
 
+    const startedAt = Date.now();
     const timer = setInterval(async () => {
         if (stopped) return;
         try {
@@ -377,6 +441,13 @@ function startWatch({ chatId, regionId, maxPrice = 10000, intervalSec = 300, cou
                 for (const id of newIds) seen.add(id);
                 for (const id of newIds) {
                     const info = await getAutoInfo(id);
+                    try {
+                        const createdMs = extractCreatedAtMs(info);
+                        if (createdMs && createdMs < startedAt) {
+                            // skip old ads created before watch started
+                            continue;
+                        }
+                    } catch (e) {}
                     watchEmitter.emit('new', { chatId, regionId, id, info });
                         // коротка пауза між запитами info щоб не робити бурхливих запитів
                         await new Promise(r => setTimeout(r, 800));
@@ -389,7 +460,7 @@ function startWatch({ chatId, regionId, maxPrice = 10000, intervalSec = 300, cou
 
     // Do not perform a mass fetch on start to avoid consuming quota.
 
-    activeWatches.set(key, { timer, seen, config: { chatId, regionId, maxPrice, intervalSec, count } });
+    activeWatches.set(key, { timer, seen, config: { chatId, regionId, maxPrice, intervalSec, count, startedAt } });
     return true;
 }
 
@@ -422,6 +493,13 @@ async function triggerWatchesOnce() {
                 for (const id of newIds) v.seen.add(id);
                 for (const id of newIds) {
                     const info = await getAutoInfo(id);
+                    try {
+                        const startedAt = cfg.startedAt || Date.now();
+                        const createdMs = extractCreatedAtMs(info);
+                        if (createdMs && createdMs < startedAt) {
+                            continue;
+                        }
+                    } catch (e) {}
                     watchEmitter.emit('new', { chatId: cfg.chatId, regionId: cfg.regionId, id, info });
                     await new Promise(r => setTimeout(r, 800));
                 }
