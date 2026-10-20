@@ -13,6 +13,13 @@ const {
     watchEmitter,
     isRateLimited
 } = require('./autoria_region_api');
+const {
+    searchOlx,
+    startOlxWatch,
+    stopAllOlxWatches,
+    listOlxWatches,
+    olxWatchEmitter
+} = require('./olx_api');
 const fs = require('fs');
 const path = require('path');
 
@@ -75,6 +82,22 @@ watchEmitter.on('new', async ({ chatId, id, info }) => {
     }
 });
 
+// OLX watch notifications
+olxWatchEmitter.on('new', async ({ chatId, item }) => {
+    try {
+        if (!item) return;
+        const title = item.title || 'Оголошення';
+        const price = item.price ? `${item.price} ${item.currency || ''}`.trim() : 'N/A';
+        const location = item.location || 'Невідомо';
+        const link = item.url || 'https://www.olx.ua/';
+        const created = item.createdAtMs ? new Date(item.createdAtMs).toLocaleString('uk-UA') : 'невідомо';
+        const message = `🟠 OLX: ${title}\n💵 ${price}\n📍 ${location}\n🕒 ${created}\n🔗 ${link}`;
+        await bot.sendMessage(chatId, message);
+    } catch (err) {
+        console.error('Failed to forward OLX watch event:', err && err.message ? err.message : err);
+    }
+});
+
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     const user = state.getUser(chatId);
@@ -126,7 +149,25 @@ bot.on('message', async (msg) => {
     }
 
     if (text === 'ℹ️ Допомога') {
-        return bot.sendMessage(chatId, 'Використовуйте меню для керування ботом. Новий пошук — задати ціну та область. Увімкнути спостереження — отримувати нові оголошення у вибраній області.');
+        return bot.sendMessage(chatId, 'Використовуйте меню для керування ботом. Новий пошук — Auto.RIA, OLX пошук — пошук по OLX, спостереження — нові оголошення. Команди: /quota, /olx_search, /olx_watch, /olx_stop, /olx_list.');
+    }
+
+    if (text === '🟠 OLX пошук') {
+        user.step = 'awaiting_olx_query';
+        state.setUser(chatId, user);
+        return bot.sendMessage(chatId, 'Введіть пошуковий запит для OLX (наприклад: Toyota Camry):');
+    }
+
+    if (text === '🟠 OLX спостереження') {
+        user.step = 'awaiting_olx_watch_query';
+        state.setUser(chatId, user);
+        return bot.sendMessage(chatId, 'Введіть запит для OLX-спостереження (наприклад: Volkswagen Passat):');
+    }
+
+    if (text === '🟠 OLX стоп') {
+        const stopped = stopAllOlxWatches(chatId);
+        if (stopped > 0) return bot.sendMessage(chatId, `Зупинено OLX-спостережень: ${stopped}.`, menu.mainKeyboard());
+        return bot.sendMessage(chatId, 'Активних OLX-спостережень не знайдено.', menu.mainKeyboard());
     }
 
     // Flow: awaiting_count
@@ -137,6 +178,57 @@ bot.on('message', async (msg) => {
         user.step = null;
         state.setUser(chatId, user);
         return bot.sendMessage(chatId, `Кількість авто встановлено: ${user.settings.defaultCount}`, menu.mainKeyboard());
+    }
+
+    // Flow: OLX search
+    if (user.step === 'awaiting_olx_query') {
+        if (!text || text.length < 2) return bot.sendMessage(chatId, 'Введіть коректний запит (мінімум 2 символи).');
+        user.data.olxQuery = text;
+        user.step = 'awaiting_olx_price';
+        state.setUser(chatId, user);
+        return bot.sendMessage(chatId, 'Введіть максимальну ціну для OLX (0 — без обмеження):');
+    }
+
+    if (user.step === 'awaiting_olx_price') {
+        const n = parseInt(text, 10);
+        if (isNaN(n) || n < 0) return bot.sendMessage(chatId, 'Введіть число (0 або більше).');
+        const query = user.data.olxQuery;
+        const maxPrice = n > 0 ? n : null;
+        user.step = null;
+        delete user.data.olxQuery;
+        state.setUser(chatId, user);
+        return runOlxSearch(chatId, query, maxPrice, user.settings.defaultCount || 10);
+    }
+
+    // Flow: OLX watch
+    if (user.step === 'awaiting_olx_watch_query') {
+        if (!text || text.length < 2) return bot.sendMessage(chatId, 'Введіть коректний запит (мінімум 2 символи).');
+        user.data.olxWatchQuery = text;
+        user.step = 'awaiting_olx_watch_price';
+        state.setUser(chatId, user);
+        return bot.sendMessage(chatId, 'Введіть максимальну ціну для OLX-спостереження (0 — без обмеження):');
+    }
+
+    if (user.step === 'awaiting_olx_watch_price') {
+        const n = parseInt(text, 10);
+        if (isNaN(n) || n < 0) return bot.sendMessage(chatId, 'Введіть число (0 або більше).');
+        const query = user.data.olxWatchQuery;
+        const maxPrice = n > 0 ? n : null;
+        const interval = (user.settings && user.settings.watchInterval) || 300;
+        const started = startOlxWatch({
+            chatId,
+            query,
+            maxPrice,
+            intervalSec: interval,
+            limit: user.settings.defaultCount || 10
+        });
+        user.step = null;
+        delete user.data.olxWatchQuery;
+        state.setUser(chatId, user);
+        if (started) {
+            return bot.sendMessage(chatId, `OLX-спостереження увімкнено: "${query}" (інтервал ${interval} сек).`);
+        }
+        return bot.sendMessage(chatId, 'Таке OLX-спостереження вже активне.');
     }
 
     // Flow: new search awaiting_price
@@ -290,6 +382,32 @@ async function sendRegionSelection(chatId, purpose = 'search', page = 0) {
     } catch (err) {
         console.error('sendRegionSelection error', err && err.message ? err.message : err);
         return bot.sendMessage(chatId, 'Помилка при підготовці меню областей.');
+    }
+}
+
+async function runOlxSearch(chatId, query, maxPrice = null, count = 10) {
+    try {
+        const list = await searchOlx({ query, maxPrice, limit: count });
+        if (!list || list.length === 0) {
+            return bot.sendMessage(chatId, `На OLX нічого не знайдено за запитом: ${query}`);
+        }
+        for (const item of list) {
+            const title = item.title || 'Оголошення';
+            const price = item.price ? `${item.price} ${item.currency || ''}`.trim() : 'N/A';
+            const location = item.location || 'Невідомо';
+            const link = item.url || 'https://www.olx.ua/';
+            const created = item.createdAtMs ? new Date(item.createdAtMs).toLocaleString('uk-UA') : 'невідомо';
+            const msg = `🟠 OLX: ${title}\n💵 ${price}\n📍 ${location}\n🕒 ${created}\n🔗 ${link}`;
+            await bot.sendMessage(chatId, msg);
+            await delay(400);
+        }
+        return bot.sendMessage(chatId, 'OLX-пошук завершено.', menu.mainKeyboard());
+    } catch (err) {
+        const m = err && err.response && err.response.data
+            ? JSON.stringify(err.response.data)
+            : (err && err.message ? err.message : String(err));
+        console.error('runOlxSearch error', m);
+        return bot.sendMessage(chatId, `Помилка OLX-пошуку: ${m}`);
     }
 }
 
@@ -540,4 +658,37 @@ bot.onText(/\/set_interval (\d+)/, async (msg, match) => {
     user.settings.watchInterval = n;
     state.setUser(chatId, user);
     return bot.sendMessage(chatId, `Інтервал спостереження встановлено: ${n} сек.`);
+});
+
+bot.onText(/\/olx_search(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const q = match && match[1] ? match[1].trim() : '';
+    if (!q) return bot.sendMessage(chatId, 'Використання: /olx_search <запит>. Наприклад: /olx_search Toyota Camry');
+    const user = state.getUser(chatId);
+    return runOlxSearch(chatId, q, null, user.settings.defaultCount || 10);
+});
+
+bot.onText(/\/olx_watch(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const q = match && match[1] ? match[1].trim() : '';
+    if (!q) return bot.sendMessage(chatId, 'Використання: /olx_watch <запит>. Наприклад: /olx_watch Volkswagen Passat');
+    const user = state.getUser(chatId);
+    const interval = (user.settings && user.settings.watchInterval) || 300;
+    const started = startOlxWatch({ chatId, query: q, intervalSec: interval, limit: user.settings.defaultCount || 10 });
+    if (!started) return bot.sendMessage(chatId, 'Таке OLX-спостереження вже активне.');
+    return bot.sendMessage(chatId, `OLX-спостереження увімкнено: "${q}" (інтервал ${interval} сек).`);
+});
+
+bot.onText(/\/olx_stop/, async (msg) => {
+    const chatId = msg.chat.id;
+    const stopped = stopAllOlxWatches(chatId);
+    return bot.sendMessage(chatId, stopped > 0 ? `Зупинено OLX-спостережень: ${stopped}.` : 'Активних OLX-спостережень не знайдено.');
+});
+
+bot.onText(/\/olx_list/, async (msg) => {
+    const chatId = msg.chat.id;
+    const watches = listOlxWatches(chatId);
+    if (!watches || watches.length === 0) return bot.sendMessage(chatId, 'Активних OLX-спостережень немає.');
+    const lines = watches.map((w, i) => `${i + 1}) ${w.config.query} | maxPrice=${w.config.maxPrice || '∞'} | interval=${w.config.intervalSec}s`);
+    return bot.sendMessage(chatId, `Активні OLX-спостереження:\n${lines.join('\n')}`);
 });
