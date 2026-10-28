@@ -5,11 +5,16 @@ const olxWatchEmitter = new EventEmitter();
 const activeOlxWatches = new Map();
 
 function getOlxConfig() {
-    const token = process.env.OLX_API_TOKEN;
+    const token = process.env.OLX_API_TOKEN || process.env.OLX_TOKEN || process.env.OLX_API_KEY;
     const baseUrl = process.env.OLX_API_BASE_URL || 'https://www.olx.ua/api/v1';
     const searchPath = process.env.OLX_API_SEARCH_PATH || '/offers';
     const infoPath = process.env.OLX_API_INFO_PATH || '/offers/{id}';
     return { token, baseUrl, searchPath, infoPath };
+}
+
+function ensureOlxToken(token) {
+    if (token) return;
+    throw new Error('Missing OLX token. Set one of: OLX_API_TOKEN, OLX_TOKEN, OLX_API_KEY');
 }
 
 function buildHeaders(token) {
@@ -123,7 +128,7 @@ function buildSearchParams({ query = '', region = null, maxPrice = null, minPric
 
 async function searchOlx({ query = '', region = null, maxPrice = null, minPrice = null, page = 1, limit = 20 } = {}) {
     const { token, baseUrl, searchPath } = getOlxConfig();
-    if (!token) throw new Error('Missing OLX_API_TOKEN in environment');
+    ensureOlxToken(token);
 
     const url = buildUrl(baseUrl, searchPath);
     const params = buildSearchParams({ query, region, maxPrice, minPrice, page, limit });
@@ -140,7 +145,7 @@ async function searchOlx({ query = '', region = null, maxPrice = null, minPrice 
 
 async function getOlxInfo(id) {
     const { token, baseUrl, infoPath } = getOlxConfig();
-    if (!token) throw new Error('Missing OLX_API_TOKEN in environment');
+    ensureOlxToken(token);
     if (!id) return null;
 
     const path = infoPath.replace('{id}', encodeURIComponent(String(id)));
