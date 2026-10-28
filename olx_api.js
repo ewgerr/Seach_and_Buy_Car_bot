@@ -9,7 +9,11 @@ function getOlxConfig() {
     const baseUrl = process.env.OLX_API_BASE_URL || 'https://www.olx.ua/api/v1';
     const searchPath = process.env.OLX_API_SEARCH_PATH || '/offers';
     const infoPath = process.env.OLX_API_INFO_PATH || '/offers/{id}';
-    return { token, baseUrl, searchPath, infoPath };
+    const userAgent = process.env.OLX_API_USER_AGENT || 'CarSearchBot/1.0';
+    const appId = process.env.OLX_APP_ID || process.env.OLX_CLIENT_ID || null;
+    const hostHeader = process.env.OLX_API_HOST || null;
+    const tokenInQuery = String(process.env.OLX_TOKEN_IN_QUERY || '').toLowerCase() === 'true';
+    return { token, baseUrl, searchPath, infoPath, userAgent, appId, hostHeader, tokenInQuery };
 }
 
 function ensureOlxToken(token) {
@@ -17,13 +21,40 @@ function ensureOlxToken(token) {
     throw new Error('Missing OLX token. Set one of: OLX_API_TOKEN, OLX_TOKEN, OLX_API_KEY');
 }
 
-function buildHeaders(token) {
-    return {
+function buildHeaders(token, cfg = {}) {
+    const headers = {
         Authorization: `Bearer ${token}`,
         'X-API-KEY': token,
         Accept: 'application/json',
-        'User-Agent': 'CarSearchBot/1.0'
+        'User-Agent': cfg.userAgent || 'CarSearchBot/1.0'
     };
+    if (cfg.appId) headers['X-App-Id'] = cfg.appId;
+    if (cfg.hostHeader) headers['Host'] = cfg.hostHeader;
+    return headers;
+}
+
+function stringifyErrorBody(data) {
+    if (!data) return '';
+    if (typeof data === 'string') return data;
+    try { return JSON.stringify(data); } catch (e) { return String(data); }
+}
+
+function isCloudFrontBlocked(status, bodyText, headers) {
+    const ct = (headers && (headers['content-type'] || headers['Content-Type'])) || '';
+    const t = (bodyText || '').toLowerCase();
+    return status === 403 && (
+        t.includes('cloudfront') ||
+        t.includes('request blocked') ||
+        t.includes('the request could not be satisfied') ||
+        String(ct).toLowerCase().includes('text/html')
+    );
+}
+
+function buildOlxBlockedError(originalErr) {
+    const hint = 'OLX 403 CloudFront: запит заблоковано. Перевірте правильний OLX API endpoint (OLX_API_BASE_URL/OLX_API_SEARCH_PATH), вимоги до заголовків та whitelist IP для Railway.';
+    const e = new Error(hint);
+    e.cause = originalErr;
+    return e;
 }
 
 function buildUrl(baseUrl, path) {
@@ -127,34 +158,59 @@ function buildSearchParams({ query = '', region = null, maxPrice = null, minPric
 }
 
 async function searchOlx({ query = '', region = null, maxPrice = null, minPrice = null, page = 1, limit = 20 } = {}) {
-    const { token, baseUrl, searchPath } = getOlxConfig();
+    const cfg = getOlxConfig();
+    const { token, baseUrl, searchPath } = cfg;
     ensureOlxToken(token);
 
     const url = buildUrl(baseUrl, searchPath);
     const params = buildSearchParams({ query, region, maxPrice, minPrice, page, limit });
+    if (cfg.tokenInQuery) params.api_key = token;
 
-    const res = await axios.get(url, {
-        headers: buildHeaders(token),
-        params,
-        timeout: 20000
-    });
+    let res;
+    try {
+        res = await axios.get(url, {
+            headers: buildHeaders(token, cfg),
+            params,
+            timeout: 20000
+        });
+    } catch (err) {
+        const status = err && err.response && err.response.status;
+        const headers = err && err.response && err.response.headers;
+        const bodyText = stringifyErrorBody(err && err.response && err.response.data);
+        if (isCloudFrontBlocked(status, bodyText, headers)) throw buildOlxBlockedError(err);
+        throw err;
+    }
 
     const arr = extractArrayFromResponse(res.data);
     return arr.map(normalizeOffer).filter(x => x.id).slice(0, limit);
 }
 
 async function getOlxInfo(id) {
-    const { token, baseUrl, infoPath } = getOlxConfig();
+    const cfg = getOlxConfig();
+    const { token, baseUrl, infoPath } = cfg;
     ensureOlxToken(token);
     if (!id) return null;
 
     const path = infoPath.replace('{id}', encodeURIComponent(String(id)));
     const url = buildUrl(baseUrl, path);
 
-    const res = await axios.get(url, {
-        headers: buildHeaders(token),
-        timeout: 20000
-    });
+    const params = {};
+    if (cfg.tokenInQuery) params.api_key = token;
+
+    let res;
+    try {
+        res = await axios.get(url, {
+            headers: buildHeaders(token, cfg),
+            params,
+            timeout: 20000
+        });
+    } catch (err) {
+        const status = err && err.response && err.response.status;
+        const headers = err && err.response && err.response.headers;
+        const bodyText = stringifyErrorBody(err && err.response && err.response.data);
+        if (isCloudFrontBlocked(status, bodyText, headers)) throw buildOlxBlockedError(err);
+        throw err;
+    }
 
     const data = res.data && res.data.data ? res.data.data : res.data;
     return normalizeOffer(data || {});
